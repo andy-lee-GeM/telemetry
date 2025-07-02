@@ -1,0 +1,9 @@
+# 📊 Telemetry MVP - Dashboard Provisioning
+# This tells Grafana where to find our pre-built dashboards
+
+# TODO: Configure dashboard provisioning in Milestone 5 
+
+{
+  "_comment": "📊 Telemetry MVP - Pressure Sensor Dashboard",
+  "_todo": "Dashboard JSON will be exported here in Milestone 6"
+} 

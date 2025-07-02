@@ -1,0 +1,67 @@
+# 📊 Telemetry MVP - Docker Compose
+# PostgreSQL + Grafana working together
+
+version: '3.8'
+
+services:
+  # 🗄️ PostgreSQL Database Service
+  db:
+    image: postgres:15-alpine          # Lightweight PostgreSQL image
+    container_name: telemetry-db       # Easy to reference in logs
+    restart: unless-stopped            # Auto-restart if it crashes
+    
+    # 🔐 Database Configuration
+    environment:
+      POSTGRES_DB: telemetry          # Database name
+      POSTGRES_USER: admin            # Username
+      POSTGRES_PASSWORD: admin        # Password (simple for learning)
+      
+    # 🔌 Port Mapping (host:container)
+    ports:
+      - "5432:5432"                  # Standard PostgreSQL port
+      
+    # 💾 Data Persistence & Initialization
+    volumes:
+      - postgres_data:/var/lib/postgresql/data    # Persist data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql  # Auto-run schema
+      
+    # 🏥 Health Check
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d telemetry"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # 📊 Grafana Visualization Service
+  grafana:
+    image: grafana/grafana:latest
+    container_name: telemetry-grafana
+    restart: unless-stopped
+    
+    # 🔐 Grafana Configuration
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin    # Login: admin/admin
+      - GF_USERS_ALLOW_SIGN_UP=false        # Only admin can access
+      
+    # 🔌 Port Mapping (web interface)
+    ports:
+      - "3000:3000"
+      
+    # 💾 Data Persistence (optional but recommended)
+    volumes:
+      - grafana_data:/var/lib/grafana
+      
+    # 🔗 Wait for database to be healthy before starting
+    depends_on:
+      db:
+        condition: service_healthy
+
+# 💾 Named Volumes (persists data between container restarts)
+volumes:
+  postgres_data:
+  grafana_data:
+
+# 🌐 Networks (containers can find each other by service name)
+networks:
+  default:
+    name: telemetry-network 
