@@ -1,0 +1,60 @@
+# Data files
+/data/
+data/
+*.tdms
+*.tdms_index
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.env
+.venv/
+env/
+venv/
+telemetry/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+.env.local
+.env.production
+
+# Logs
+logs/
+*.log
+
+# Database dumps
+*.sql.backup
+*.dump
+
+# Temporary files
+*.tmp
+*.temp

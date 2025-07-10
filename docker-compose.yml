@@ -1,0 +1,67 @@
+# 📊 Telemetry MVP - Docker Compose
+# TimescaleDB + Grafana for telemetry dashboard
+
+version: '3.8'
+
+services:
+  # 🗄️ TimescaleDB (PostgreSQL + time-series extensions)
+  timescaledb:
+    image: timescale/timescaledb:latest-pg15
+    container_name: telemetry-timescale
+    restart: unless-stopped
+    
+    # 🔐 Database Configuration
+    environment:
+      POSTGRES_DB: telemetry
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: admin
+      
+    # 🔌 Port Mapping
+    ports:
+      - "5432:5432"
+      
+    # 💾 Data Persistence & Initialization
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+      
+    # 🏥 Health Check
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d telemetry"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # 📊 Grafana Visualization Service
+  grafana:
+    image: grafana/grafana:latest
+    container_name: telemetry-grafana
+    restart: unless-stopped
+    
+    # 🔐 Grafana Configuration
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_USERS_ALLOW_SIGN_UP=false
+      
+    # 🔌 Port Mapping
+    ports:
+      - "3000:3000"
+      
+    # 💾 Data Persistence
+    volumes:
+      - grafana_data:/var/lib/grafana
+      
+    # 🔗 Wait for database
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+
+# 💾 Named Volumes
+volumes:
+  timescale_data:
+  grafana_data:
+
+# 🌐 Network
+networks:
+  default:
+    name: telemetry-network
