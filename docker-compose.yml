@@ -18,7 +18,7 @@ services:
       
     # 🔌 Port Mapping
     ports:
-      - "5432:5432"
+      - "5433:5432"
       
     # 💾 Data Persistence & Initialization
     volumes:
@@ -45,7 +45,7 @@ services:
       
     # 🔌 Port Mapping
     ports:
-      - "3000:3000"
+      - "3001:3000"
       
     # 💾 Data Persistence
     volumes:
