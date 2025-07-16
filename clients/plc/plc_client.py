@@ -11,6 +11,9 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+# Add this import after the existing imports
+from clients.telemetry_utils import insert_telemetry_batch, TelemetryReading, test_central_connection, get_telemetry_stats
+
 # ============================================================================
 # CONFIGURATION
 # ============================================================================
@@ -22,16 +25,8 @@ PLC_USER = "postgres"
 PLC_PASSWORD = "1"
 PLC_DATABASE = "XenonData"
 
-# Central Database Configuration
-CENTRAL_HOST = "localhost"
-CENTRAL_PORT = 5433
-CENTRAL_USER = "admin"
-CENTRAL_PASSWORD = "admin"
-CENTRAL_DATABASE = "telemetry"
-
 # Build connection strings
 PLC_DB_URL = f"postgresql://{PLC_USER}:{PLC_PASSWORD}@{PLC_HOST}:{PLC_PORT}/{PLC_DATABASE}"
-CENTRAL_DB_URL = f"postgresql://{CENTRAL_USER}:{CENTRAL_PASSWORD}@{CENTRAL_HOST}:{CENTRAL_PORT}/{CENTRAL_DATABASE}"
 
 # Processing settings
 POLL_INTERVAL = 5.0      # Check for new data every 5 seconds
@@ -54,15 +49,10 @@ logger = logging.getLogger('PLCClient')
 class PLCClient:
     def __init__(self):
         logger.info(f"🔗 PLC Connection: {PLC_HOST}:{PLC_PORT}/{PLC_DATABASE} as {PLC_USER}")
-        logger.info(f"🔗 Central Connection: {CENTRAL_HOST}:{CENTRAL_PORT}/{CENTRAL_DATABASE} as {CENTRAL_USER}")
         
-        # Database connections
+        # Database connections - only need PLC connection now
         self.plc_engine = create_engine(PLC_DB_URL)
-        self.central_engine = create_engine(CENTRAL_DB_URL)
-        
-        # Create sessions
         self.PLCSession = sessionmaker(bind=self.plc_engine)
-        self.CentralSession = sessionmaker(bind=self.central_engine)
         
         # State tracking
         self.last_processed_time = None
@@ -147,78 +137,24 @@ class PLCClient:
             logger.warning("No data to transform")
             return {"success": 0, "skipped": 0, "errors": 0}
         
-        try:
-            with self.CentralSession() as session:
-                successful_inserts = 0
-                skipped_nulls = 0
-                errors = 0
-                
-                logger.info(f"🔄 Transforming and inserting {len(plc_readings)} readings...")
-                
-                for timestamp, sensor_name, value in plc_readings:
-                    # Skip NULL values
-                    if value is None:
-                        skipped_nulls += 1
-                        continue
-                    
-                    # Try to convert to float
-                    try:
-                        float_value = float(value)
-                    except (ValueError, TypeError):
-                        skipped_nulls += 1
-                        continue
-                    
-                    # Create metadata
-                    metadata = {
-                        'source': 'beckhoff_plc',
-                        'transfer_time': datetime.now(timezone.utc).isoformat()
-                    }
-                    
-                    try:
-                        # UPSERT: Insert or update if duplicate
-                        session.execute(text("""
-                            INSERT INTO telemetry (ts, source, sensor, value, metadata)
-                            VALUES (:ts, :source, :sensor, :value, :metadata)
-                            ON CONFLICT (ts, source, sensor) DO UPDATE SET
-                                value = EXCLUDED.value,
-                                metadata = EXCLUDED.metadata,
-                                ingest_ts = NOW()
-                        """), {
-                            "ts": timestamp,
-                            "source": source_label,
-                            "sensor": sensor_name,
-                            "value": float_value,
-                            "metadata": json.dumps(metadata)
-                        })
-                        
-                        successful_inserts += 1
-                        
-                    except Exception as e:
-                        logger.warning(f"Failed to insert {sensor_name}: {e}")
-                        errors += 1
-                        continue
-                
-                session.commit()
-                
-                # Update last processed time if we have data
-                if plc_readings and successful_inserts > 0:
-                    self.last_processed_time = max(reading[0] for reading in plc_readings)
-                
-                results = {
-                    "success": successful_inserts,
-                    "skipped": skipped_nulls,
-                    "errors": errors
-                }
-                
-                logger.info(f"✅ Successfully inserted: {successful_inserts}")
-                logger.info(f"⚠️  Skipped nulls: {skipped_nulls}")
-                logger.info(f"❌ Errors: {errors}")
-                
-                return results
-                
-        except Exception as e:
-            logger.error(f"❌ Error during transform/insert: {e}")
-            return {"success": 0, "skipped": 0, "errors": 0}
+        # Convert PLC tuples to TelemetryReading objects
+        readings = []
+        for timestamp, sensor_name, value in plc_readings:
+            readings.append(TelemetryReading(
+                timestamp=timestamp,
+                sensor=sensor_name,
+                value=value,
+                metadata={'source': 'beckhoff_plc'}
+            ))
+        
+        # Use shared utility for insertion
+        result = insert_telemetry_batch(readings, source_label, "PLC", logger)
+        
+        # Update last processed time if we have successful data
+        if plc_readings and result["success"] > 0:
+            self.last_processed_time = max(reading[0] for reading in plc_readings)
+        
+        return result
     
     def health_check(self):
         """Test connectivity to both databases"""
@@ -227,59 +163,18 @@ class PLCClient:
             with self.PLCSession() as session:
                 session.execute(text("SELECT 1"))
             
-            # Test central connection
-            with self.CentralSession() as session:
-                session.execute(text("SELECT 1"))
+            # Test central connection using shared utility
+            central_ok = test_central_connection(logger)
             
-            return True
+            return central_ok
             
         except Exception as e:
-            logger.warning(f"Health check failed: {e}")
+            logger.warning(f"PLC health check failed: {e}")
             return False
     
-    def get_telemetry_stats(self, source_filter=None):
+    def get_telemetry_stats(self, source_filter="PLC"):
         """Get statistics from telemetry database"""
-        try:
-            with self.central_engine.connect() as conn:
-                # Count total records
-                if source_filter:
-                    result = conn.execute(text(
-                        "SELECT COUNT(*) FROM telemetry WHERE source = :source"
-                    ), {"source": source_filter})
-                else:
-                    result = conn.execute(text("SELECT COUNT(*) FROM telemetry"))
-                
-                total_count = result.fetchone()[0]
-                
-                # Get unique sensors
-                if source_filter:
-                    result = conn.execute(text("""
-                        SELECT sensor, COUNT(*) as count 
-                        FROM telemetry 
-                        WHERE source = :source
-                        GROUP BY sensor 
-                        ORDER BY count DESC 
-                        LIMIT 10
-                    """), {"source": source_filter})
-                else:
-                    result = conn.execute(text("""
-                        SELECT sensor, COUNT(*) as count 
-                        FROM telemetry 
-                        GROUP BY sensor 
-                        ORDER BY count DESC 
-                        LIMIT 10
-                    """))
-                
-                top_sensors = result.fetchall()
-                
-                return {
-                    "total_count": total_count,
-                    "top_sensors": top_sensors
-                }
-                
-        except Exception as e:
-            logger.error(f"❌ Error getting telemetry stats: {e}")
-            return {"total_count": 0, "top_sensors": []}
+        return get_telemetry_stats(source_filter, logger)
     
     def run_continuous_polling(self):
         """Main continuous polling loop"""
