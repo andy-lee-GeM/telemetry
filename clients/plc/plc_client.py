@@ -5,13 +5,11 @@ Supports both continuous polling and one-time data retrieval
 """
 
 import time
-import json
 import logging
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-# Add this import after the existing imports
 from clients.telemetry_utils import insert_telemetry_batch, TelemetryReading, test_central_connection, get_telemetry_stats
 
 # ============================================================================

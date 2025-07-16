@@ -89,6 +89,20 @@ def inspect_tdms_file(file_path):
             print(f"   {group.name} → {channel.name}")
 
 if __name__ == "__main__":
-    # Inspect your TDMS file
-    tdms_path = "data/FRIGIDAIRE-2025-02-19-19-55-25.tdms"
-    inspect_tdms_file(tdms_path)
+    import sys
+    
+    if len(sys.argv) != 2:
+        print("Usage: python inspect_tdms.py <tdms_file_path>")
+        print("Example: python inspect_tdms.py data/FRIGIDAIRE-2025-02-19-19-55-25.tdms")
+        sys.exit(1)
+    
+    tdms_path = sys.argv[1]
+    
+    try:
+        inspect_tdms_file(tdms_path)
+    except FileNotFoundError:
+        print(f"❌ Error: File not found: {tdms_path}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Error inspecting TDMS file: {e}")
+        sys.exit(1)
