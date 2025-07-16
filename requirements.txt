@@ -1,0 +1,12 @@
+# Core dependencies
+sqlalchemy>=1.4.0
+psycopg2-binary>=2.9.0
+nptdms>=1.6.0
+numpy>=1.21.0
+
+# Development and testing
+pytest>=6.0.0
+jupyter>=1.0.0
+
+# File watching (if you add background processing later)
+watchdog>=2.0.0 
