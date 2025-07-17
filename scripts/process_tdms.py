@@ -9,7 +9,6 @@ import os
 import argparse
 import logging
 import csv
-import json
 import nptdms
 import numpy as np
 from datetime import datetime, timedelta
