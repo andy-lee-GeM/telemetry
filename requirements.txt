@@ -6,7 +6,4 @@ numpy>=1.21.0
 
 # Development and testing
 pytest>=6.0.0
-jupyter>=1.0.0
-
-# File watching (if you add background processing later)
-watchdog>=2.0.0 
+jupyter>=1.0.0 
