@@ -38,9 +38,9 @@ DB_CONFIG = {
 }
 
 # Optimized settings
-CHUNK_SIZE = 1_000_000  # Samples per chunk
-BATCH_SIZE = 100_000    # Records per database batch
-MAX_WORKERS = 3         # Parallel workers (leave some CPU for DB)
+CHUNK_SIZE = 1000000  # Samples per chunk
+BATCH_SIZE = 100000    # Records per database batch
+MAX_WORKERS = 6         # Parallel workers (leave some CPU for DB)
 
 # Setup logging
 logging.basicConfig(
@@ -372,8 +372,8 @@ def main():
     )
     
     parser.add_argument('file', help='TDMS file path')
-    parser.add_argument('--hz', type=float, default=10.0,
-                       help='Target sample rate in Hz (default: 10)')
+    parser.add_argument('--hz', type=float, default=1.0,
+                       help='Target sample rate in Hz (default: 1.0)')
     parser.add_argument('--hours', type=float, default=12.0,
                        help='Maximum duration in hours (default: 12)')
     parser.add_argument('--method', choices=['decimation', 'averaging'],
