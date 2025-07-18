@@ -10,20 +10,66 @@ import logging
 import os
 import sys
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List
 
 import nptdms
 import numpy as np
 from tqdm import tqdm
+import json
 
 # Add project root to Python path
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, project_root)
 
-from clients.telemetry_utils import TelemetryReading, insert_telemetry_batch
+from clients.telemetry_utils import TelemetryReading
 from utils.downsampling_utils import downsample, calculate_max_samples_from_hz
+
+# ============================================================================
+# DATABASE CONFIGURATION
+# ============================================================================
+
+# Database configuration
+DB_CONFIG = {
+    'host': '169.254.77.77',
+    'port': 5433,
+    'database': 'telemetry',
+    'user': 'admin',
+    'password': 'admin'
+}
+
+# Build connection string from config
+CENTRAL_DB_URL = f"postgresql://{DB_CONFIG['user']}:{DB_CONFIG['password']}@{DB_CONFIG['host']}:{DB_CONFIG['port']}/{DB_CONFIG['database']}"
+
+def test_database_connection() -> bool:
+    """Test database connection before processing"""
+    try:
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.orm import sessionmaker
+        
+        logger.info(f"🔍 Testing database connection to {DB_CONFIG['host']}:{DB_CONFIG['port']}")
+        
+        engine = create_engine(CENTRAL_DB_URL)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
+        # Test connection
+        result = session.execute(text("SELECT 1 as test"))
+        test_value = result.fetchone()[0]
+        
+        if test_value == 1:
+            logger.info("✅ Database connection successful!")
+            session.close()
+            return True
+        else:
+            logger.error("❌ Unexpected database test result")
+            session.close()
+            return False
+            
+    except Exception as e:
+        logger.error(f"❌ Database connection failed: {e}")
+        return False
 
 # ============================================================================
 # LOGGING SETUP
@@ -147,12 +193,58 @@ def write_readings_to_csv(readings: List[TelemetryReading], csv_writer) -> int:
     return count
 
 def write_readings_to_database(readings: List[TelemetryReading]) -> dict:
-    """Write readings to database"""
+    """Write readings to database using configured connection"""
     if not readings:
         return {"success": 0, "errors": 0}
     
-    logger.info(f"💾 Writing {len(readings):,} readings to database")
-    return insert_telemetry_batch(readings, "NI-DAQ", "cDAQ", logger)
+    logger.info(f"💾 Writing {len(readings):,} readings to database at {DB_CONFIG['host']}:{DB_CONFIG['port']}")
+    
+    try:
+        from sqlalchemy import create_engine, text
+        from sqlalchemy.orm import sessionmaker
+        
+        engine = create_engine(CENTRAL_DB_URL)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        
+        # Prepare batch data
+        batch_data = []
+        for reading in readings:
+            metadata = reading.metadata.copy()
+            metadata.update({
+                'client': 'process_tdms',
+                'transfer_time': datetime.now(timezone.utc).isoformat(),
+                'source_host': DB_CONFIG['host']
+            })
+            
+            batch_data.append({
+                "ts": reading.timestamp,
+                "source": "NI-DAQ",
+                "sensor": reading.sensor,
+                "value": float(reading.value),
+                "metadata": json.dumps(metadata)
+            })
+        
+        # Bulk insert with executemany
+        session.execute(text("""
+            INSERT INTO telemetry (ts, source, sensor, value, metadata)
+            VALUES (:ts, :source, :sensor, :value, :metadata)
+            ON CONFLICT (ts, source, sensor) DO UPDATE SET
+                value = EXCLUDED.value,
+                metadata = EXCLUDED.metadata,
+                ingest_ts = NOW()
+        """), batch_data)
+        
+        session.commit()
+        session.close()
+        
+        result = {"success": len(readings), "errors": 0}
+        logger.info(f"✅ Database write complete: {result['success']:,} records inserted")
+        return result
+        
+    except Exception as e:
+        logger.error(f"❌ Database operation failed: {e}")
+        return {"success": 0, "errors": len(readings)}
 
 # ============================================================================
 # MAIN PROCESSING
@@ -166,6 +258,14 @@ def process_tdms_file(file_path: str, target_hz: float, max_duration_hours: floa
     # Validate input
     path = validate_tdms_file(file_path)
     base_timestamp = datetime.fromtimestamp(path.stat().st_mtime)
+    
+    # Test database connection if needed
+    if save_to_db and not dry_run:
+        logger.info("🔍 Validating database connection...")
+        if not test_database_connection():
+            logger.error("❌ Database connection failed. Cannot proceed with --save-to-db option.")
+            return {"success": 0, "errors": 1}
+        logger.info("✅ Database connection validated")
     
     # Calculate max samples from Hz and duration
     max_samples = calculate_max_samples_from_hz(target_hz, max_duration_hours)
@@ -258,6 +358,7 @@ def create_argument_parser():
     parser.add_argument('--dry-run', action='store_true', help='Show stats only, no output')
     parser.add_argument('--method', choices=['decimation', 'averaging'], 
                        default='decimation', help='Downsampling method')
+    parser.add_argument('--test-db', action='store_true', help='Test database connection and exit')
     
     return parser
 
@@ -272,6 +373,16 @@ def main():
     args = parser.parse_args()
     
     try:
+        # Handle database connection test
+        if args.test_db:
+            logger.info("🔍 Testing database connection...")
+            if test_database_connection():
+                logger.info("✅ Database connection test passed!")
+                sys.exit(0)
+            else:
+                logger.error("❌ Database connection test failed!")
+                sys.exit(1)
+        
         # Validate arguments
         validate_arguments(args)
         
@@ -279,7 +390,7 @@ def main():
         result = process_tdms_file(
             file_path=args.file_path,
             target_hz=args.hz,
-            max_duration_hours=args.max_duration,  # Changed from max_samples
+            max_duration_hours=args.max_duration,
             output_csv=args.csv,
             save_to_db=args.save_to_db,
             dry_run=args.dry_run,
