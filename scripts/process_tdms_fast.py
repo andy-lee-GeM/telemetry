@@ -101,8 +101,7 @@ class FastDatabaseWriter:
         return records_written
 
 
-def process_channel_fast(channel, group_name: str, base_timestamp: datetime,
-                        filename: str, target_hz: float, max_samples: int,
+def process_channel_fast(channel, group_name: str, filename: str, target_hz: float, max_samples: int,
                         downsample_method: str) -> Generator[List[Tuple], None, Dict]:
     """
     Fast channel processing that yields raw tuples for COPY
@@ -116,6 +115,25 @@ def process_channel_fast(channel, group_name: str, base_timestamp: datetime,
         sample = channel[0:1]
         if not np.issubdtype(sample.dtype, np.number):
             return {'processed': 0, 'output': 0, 'channel': channel.name}
+        
+        # Get channel start time from properties
+        if not (hasattr(channel, 'properties') and channel.properties and 'wf_start_time' in channel.properties):
+            raise ValueError(f"Channel {channel.name} does not have wf_start_time property - cannot determine accurate timestamps")
+        
+        try:
+            # Parse the wf_start_time property
+            wf_start_time = channel.properties['wf_start_time']
+            if isinstance(wf_start_time, datetime):
+                channel_start_time = wf_start_time
+            else:
+                # Try to parse string format
+                channel_start_time = datetime.fromisoformat(str(wf_start_time))
+            # Ensure timezone awareness
+            if channel_start_time.tzinfo is None:
+                channel_start_time = channel_start_time.replace(tzinfo=timezone.utc)
+            logger.debug(f"Using wf_start_time for {channel.name}: {channel_start_time}")
+        except Exception as e:
+            raise ValueError(f"Could not parse wf_start_time for {channel.name}: {e}")
         
         # Calculate chunking strategy
         needs_downsampling = total_samples > max_samples
@@ -154,7 +172,7 @@ def process_channel_fast(channel, group_name: str, base_timestamp: datetime,
             # Create raw tuples (no Python objects)
             records = []
             for value in chunk_data:
-                timestamp = base_timestamp + timedelta(seconds=sample_index * time_delta_seconds)
+                timestamp = channel_start_time + timedelta(seconds=sample_index * time_delta_seconds)
                 records.append((
                     timestamp,
                     'NI-DAQ',
@@ -247,7 +265,7 @@ def process_tdms_file_fast(file_path: str, target_hz: float = 10.0,
                     
                     try:
                         generator = process_channel_fast(
-                            channel, group_name, base_timestamp, path.name,
+                            channel, group_name, path.name,
                             target_hz, max_samples, downsample_method
                         )
                         
@@ -316,7 +334,7 @@ def process_tdms_file_fast(file_path: str, target_hz: float = 10.0,
                 with tqdm(total=len(channels), desc="Processing channels") as pbar:
                     for group_name, channel in channels:
                         generator = process_channel_fast(
-                            channel, group_name, base_timestamp, path.name,
+                            channel, group_name, path.name,
                             target_hz, max_samples, downsample_method
                         )
                         
